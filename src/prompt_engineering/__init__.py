@@ -1,4 +1,5 @@
-import openai
+from openai import OpenAI
+import google.generativeai as genai
 import json
 from stqdm import stqdm
 
@@ -167,33 +168,42 @@ Write a work section for the candidate according to the Work schema. Include onl
 """
 
 
-def generate_json_resume(cv_text, api_key, model="gpt-3.5-turbo"):
+def generate_json_resume(cv_text, api_key, model="gpt-4o", model_type="OpenAI"):
     """Generate a JSON resume from a CV text"""
     sections = []
+    if model_type == "OpenAI":
+        client = OpenAI(api_key=api_key)
+    elif model_type == "Gemini":
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model)
 
     for prompt in stqdm(
-        [
-            BASICS_PROMPT,
-            EDUCATION_PROMPT,
-            AWARDS_PROMPT,
-            PROJECTS_PROMPT,
-            SKILLS_PROMPT,
-            WORK_PROMPT,
-        ],
-        desc="This may take a while...",
+            [
+                BASICS_PROMPT,
+                EDUCATION_PROMPT,
+                AWARDS_PROMPT,
+                PROJECTS_PROMPT,
+                SKILLS_PROMPT,
+                WORK_PROMPT,
+            ],
+            desc="This may take a while...",
     ):
         filled_prompt = prompt.replace(CV_TEXT_PLACEHOLDER, cv_text)
-        response = openai.ChatCompletion.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": filled_prompt},
-            ],
-            api_key=api_key,
-        )
-
+        if model_type == "OpenAI":
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": filled_prompt},
+                ],
+            )
+            answer = response.choices[0].message.content
+        elif model_type == "Gemini":
+            full_prompt = f"{SYSTEM_TAILORING}\n\nUser: {filled_prompt}\nAssistant:"
+            response = model.generate_content(full_prompt)
+            answer = response.parts[0].text
+            answer = answer.strip("'").replace("```json\n", "").replace("\n```", "")
         try:
-            answer = response["choices"][0]["message"]["content"]
             answer = json.loads(answer)
 
             if prompt == BASICS_PROMPT and "basics" not in answer:
@@ -201,7 +211,7 @@ def generate_json_resume(cv_text, api_key, model="gpt-3.5-turbo"):
 
             sections.append(answer)
         except Exception as e:
-            print(e)
+            print(f"Exception occurred.{e}")
 
     final_json = {}
     for section in sections:
@@ -210,22 +220,35 @@ def generate_json_resume(cv_text, api_key, model="gpt-3.5-turbo"):
     return final_json
 
 
-def tailor_resume(cv_text, api_key, model="gpt-3.5-turbo"):
+def tailor_resume(cv_text, api_key, model="gpt-4o", model_type="OpenAI"):
     filled_prompt = TAILORING_PROMPT.replace("<CV_TEXT>", cv_text)
+    if model_type == "OpenAI":
+        client = OpenAI(api_key=api_key)
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_TAILORING},
+                    {"role": "user", "content": filled_prompt},
+                ],
+            )
 
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": SYSTEM_TAILORING},
-                {"role": "user", "content": filled_prompt},
-            ],
-            api_key=api_key,
-        )
-
-        answer = response["choices"][0]["message"]["content"]
-        return answer
-    except Exception as e:
-        print(e)
-        print("Failed to tailor resume.")
-        return cv_text
+            answer = response.choices[0].message.content
+            return answer
+        except Exception as e:
+            print(e)
+            print("Failed to tailor resume.")
+            return cv_text
+    elif model_type == "Gemini":
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(model)
+        try:
+            full_prompt = f"{SYSTEM_TAILORING}\n\nUser: {filled_prompt}\nAssistant:"
+            response = model.generate_content(full_prompt)
+            print(type(response.parts[0].text), response.parts[0].text)
+            answer = response.parts[0].text
+            return answer
+        except Exception as e:
+            print(e)
+            print("Failed to tailor resume.")
+            return cv_text
